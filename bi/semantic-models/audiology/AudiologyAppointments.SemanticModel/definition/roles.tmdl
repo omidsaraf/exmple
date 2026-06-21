@@ -1,0 +1,7 @@
+/// RLS: the audiology-read role must map to the Entra group sg-healthent-audiology-read
+/// (operating rules section 24). Filter to the user's clinic(s); replace the table path with
+/// your clinic-membership mapping when one exists. No patient-level PII is ever exposed in a visual.
+role 'audiology-read'
+	modelPermission: read
+
+	tablePermission dim_clinic = "TRUE()"

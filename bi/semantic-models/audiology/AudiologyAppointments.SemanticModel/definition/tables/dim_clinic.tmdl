@@ -1,0 +1,21 @@
+table dim_clinic
+	lineageTag: 22222222-2222-2222-2222-222222222222
+
+	column clinic_id
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: clinic_id
+		lineageTag: 2a222222-2222-2222-2222-222222222222
+
+	column clinic_name
+		dataType: string
+		summarizeBy: none
+		sourceColumn: clinic_name
+		lineageTag: 2b222222-2222-2222-2222-222222222222
+
+	partition dim_clinic = entity
+		mode: directLake
+		source
+			entityName: dim_clinic
+			schemaName: audiology
+			expressionSource: DatabaseQuery

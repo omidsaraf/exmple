@@ -1,0 +1,102 @@
+# manifest.yml - dataflow df_audiology_appointments  (project HEARING_P1)
+# =============================================================================
+#  Worked example 1 of 3: TABLE source, SUBJECT-AREA dataflow, full medallion.
+#  Demonstrates the full hierarchy (ADR-48): DAG -> 3 layer BATCHES (bronze/silver/gold)
+#  -> JOBS (parallel/sequential by job order) -> PROCS -> PROC_PARAMS, with MULTIPLE tables
+#  per layer (appointment + its clinic reference dim) so silver fan-in is visible.
+#  Single source of truth. Regenerate:
+#     python gen_seeds.py --project-dir dataflows/metadata/HEARING_P1
+#     python gen_views.py --project-dir dataflows/metadata/HEARING_P1 --env pilot
+#  Add/change a table, job, proc, or param: edit here, regenerate, review in the PR.
+#  Remove one: delete it here, set `prune: true`, regenerate (emits 09_seed_prune.sql).
+# =============================================================================
+dag_uid: df_audiology_appointments
+project_code: HEARING_P1
+domain: audiology
+kind: mixed
+layers: [bronze, silver, gold]
+description: "Worked example 1 of 3 (table source, subject-area, full medallion). Ingest the appointment fact table and its clinic reference table to Bronze (incremental watermark on modified_at), conform both to Silver (the appointment build reads BOTH bronze tables to denormalise clinic_name), and publish two Gold SCD2 dimensions (dim_appointment, dim_clinic) with masked consumption and unmasked tech serving views. Reconciliation runs in the gold batch after the dims."
+owner: "fabric-admin@Samestantil44outlook.onmicrosoft.com"
+# prune: true            # uncomment to remove rows this manifest no longer declares (ADR-48 §6)
+notes: |
+  Prerequisite connection: audiology_pilot_src (an azure_sql connection to the pilot source DB,
+  framework source seed). Storage resolves via meta.storage_target (ADR-36) - never hardcode abfss.
+
+# ===== BRONZE batch (ingestion + bronze load) =====
+bronze:
+  jobs:
+    - name: ingest                 # -> J_ingest ; both tables ingest in parallel (same proc_order)
+      order: 10
+      objects:
+        - name: appointment
+          source: { kind: table, connection: audiology_pilot_src, schema: dbo, table: appointment }
+          target: { schema: audiology, table: appointment }
+          load:   { type: incremental_watermark, watermark_column: modified_at, watermark_datatype: timestamp, business_key: appointment_id }
+          recon:  { mode: sum, measure: duration_minutes }
+          retention: { value: 7, unit: years }
+          params:
+            - { name: max_parallel_copy, value: 4, datatype: int, desc: "source read parallelism cap" }
+          columns:
+            - { name: appointment_id,     type: bigint,        bk: true }
+            - { name: patient_id,         type: bigint,        phi: true, mask: true }
+            - { name: clinic_id,          type: int }
+            - { name: appointment_ts,     type: "datetime2(3)" }
+            - { name: appointment_status, type: "nvarchar(30)" }
+            - { name: duration_minutes,   type: int }
+            - { name: modified_at,        type: "datetime2(3)" }
+        - name: clinic
+          source: { kind: table, connection: audiology_pilot_src, schema: dbo, table: clinic }
+          target: { schema: audiology, table: clinic }
+          load:   { type: incremental_watermark, watermark_column: modified_at, watermark_datatype: timestamp, business_key: clinic_id }
+          recon:  { mode: rowhash }
+          retention: { value: 7, unit: years }
+          cluster_by: clinic_id           # small reference dim: cluster (Z-ORDER) by key, not partition (ADR-48)
+          columns:
+            - { name: clinic_id,    type: int,            bk: true }
+            - { name: clinic_name,  type: "nvarchar(100)" }
+            - { name: region,       type: "nvarchar(50)" }
+            - { name: modified_at,  type: "datetime2(3)" }
+
+# ===== SILVER batch (conform; appointment fans in from both bronze tables) =====
+silver:
+  jobs:
+    - name: conform                # -> J_conform ; both builds run in parallel
+      order: 10
+      objects:
+        - name: appointment
+          notebook: SlvrAudiologyAppointmentsHearingP1
+          source_map: '{"appointment_bronze": "audiology/bronze/main:audiology/appointment", "clinic_bronze": "audiology/bronze/main:audiology/clinic"}'
+          write_mode: merge
+          business_keys: appointment_id
+        - name: clinic
+          notebook: SlvrAudiologyClinicHearingP1
+          source_map: '{"clinic_bronze": "audiology/bronze/main:audiology/clinic"}'
+          write_mode: merge
+          business_keys: clinic_id
+
+# ===== GOLD batch (two SCD2 dims, then reconciliation) =====
+gold:
+  jobs:
+    - name: dims                   # -> J_dims (order 10) ; recon job auto-added at order 20
+      order: 10
+      objects:
+        - name: dim_appointment
+          dim_table: dim_appointment
+          business_key: appointment_id
+          recon_object: appointment
+          columns:
+            - { name: appointment_id,     type: bigint,         bk: true }
+            - { name: patient_id,         type: bigint,         phi: true, mask: true }
+            - { name: clinic_id,          type: int,            scd2: true }
+            - { name: clinic_name,        type: "nvarchar(100)", scd2: true }
+            - { name: appointment_ts,     type: "datetime2(3)", scd2: true }
+            - { name: appointment_status, type: "nvarchar(30)", scd2: true }
+            - { name: duration_minutes,   type: int,            scd2: true }
+        - name: dim_clinic
+          dim_table: dim_clinic
+          business_key: clinic_id
+          recon_object: clinic
+          columns:
+            - { name: clinic_id,   type: int,            bk: true }
+            - { name: clinic_name, type: "nvarchar(100)", scd2: true }
+            - { name: region,      type: "nvarchar(50)",  scd2: true }

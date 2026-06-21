@@ -1,0 +1,85 @@
+# manifest.yml - dataflow df_dynamics_contact  (project HEARING_P2)
+# =============================================================================
+#  Worked example 2 of 3: CRM 365 (Dynamics / Dataverse) TABLE source, full medallion.
+#  Rich PII (name, email, phone, DOB, postcode) drives the SCD2 + two-view (masked
+#  consumption / unmasked tech) DDM demonstration. Connectivity: crm365-connectivity-example.md.
+#  Full hierarchy (ADR-48): DAG -> bronze/silver/gold batches -> jobs -> procs -> params.
+#  Regenerate:
+#     python gen_seeds.py --project-dir dataflows/metadata/HEARING_P2
+#     python gen_views.py --project-dir dataflows/metadata/HEARING_P2 --env pilot
+# =============================================================================
+dag_uid: df_dynamics_contact
+project_code: HEARING_P2
+domain: dynamics
+kind: mixed
+layers: [bronze, silver, gold]
+description: "Worked example 2 of 3 (CRM 365 / Dataverse table source, full medallion). Ingest the Dataverse contact entity to Bronze (incremental watermark on modifiedon), conform and rename to Silver, and publish the Gold SCD2 dimension dim_contact. Rich PII (name, email, phone, date of birth, postcode) demonstrates SCD2 tracking plus the two serving views: masked consumption.v_dim_contact for Business readers and unmasked tech.v_dim_contact for the pipeline and engineers."
+owner: "fabric-admin@Samestantil44outlook.onmicrosoft.com"
+notes: |
+  CRM/Dataverse connectivity is defined ONCE in meta.source_connection (connection
+  dynamics_crm_prod, connection_type=dataverse) and reused by every entity - onboarding a
+  new entity is metadata only. Default path = Link to Fabric (zero-copy, no firewall, ADR-31).
+
+# ===== BRONZE batch =====
+bronze:
+  jobs:
+    - name: ingest
+      order: 10
+      objects:
+        - name: contact
+          source: { kind: table, connection: dynamics_crm_prod, schema: dataverse, table: contact }
+          target: { schema: dynamics, table: contact }
+          # CRM/Dataverse here demonstrates the SNAPSHOT-ARCHIVE pattern (ADR-48): the source is
+          # treated as a full overwrite snapshot, but Bronze keeps an N-year per-day history. Each
+          # load appends the snapshot to a snapshot_date partition with replaceWhere (idempotent per
+          # day -> no duplicate records; an empty pull writes nothing -> no records). Silver reads
+          # the latest snapshot (latest-per-key) and Gold SCD2 versions it. Switch to
+          # incremental_watermark on modifiedon if you prefer CDC-timestamp ingestion instead.
+          load:   { type: snapshot_archive, business_key: contactid }
+          recon:  { mode: rowhash }
+          retention: { value: 7, unit: years }
+          partition_by: snapshot_date     # low-cardinality date partition (ADR-48)
+          archive: true                   # keep the per-day Bronze history
+          columns:
+            - { name: contactid,           type: string,        bk: true }
+            - { name: firstname,           type: string,        pii: true, mask: true }
+            - { name: lastname,            type: string,        pii: true, mask: true }
+            - { name: fullname,            type: string,        pii: true, mask: true }
+            - { name: emailaddress1,       type: string,        pii: true, mask: true }
+            - { name: telephone1,          type: string,        pii: true, mask: true }
+            - { name: mobilephone,         type: string,        pii: true, mask: true }
+            - { name: birthdate,           type: date,          phi: true, mask: true }
+            - { name: address1_postalcode, type: string,        pii: true, mask: true }
+            - { name: gendercode,          type: int }
+            - { name: modifiedon,          type: "datetime2(3)" }
+
+# ===== SILVER batch (conform + rename Dataverse columns) =====
+silver:
+  jobs:
+    - name: conform
+      order: 10
+      objects:
+        - name: contact
+          notebook: SlvrDynamicsContactHearingP2
+          source_map: '{"contact_bronze": "dynamics/bronze/main:dynamics/contact"}'
+          write_mode: merge
+          business_keys: contactid
+
+# ===== GOLD batch (SCD2 dim + reconciliation) =====
+gold:
+  jobs:
+    - name: dims
+      order: 10
+      objects:
+        - name: dim_contact
+          dim_table: dim_contact
+          business_key: contactid
+          recon_object: contact
+          columns:
+            - { name: contactid,   type: string, bk: true }
+            - { name: full_name,   type: string, pii: true, mask: true, scd2: true }
+            - { name: email,       type: string, pii: true, mask: true, scd2: true }
+            - { name: phone,       type: string, pii: true, mask: true, scd2: true }
+            - { name: birth_date,  type: date,   phi: true, mask: true }
+            - { name: postcode,    type: string, pii: true, mask: true, scd2: true }
+            - { name: gender_code, type: int,                            scd2: true }

@@ -1,0 +1,11 @@
+model Model
+	culture: en-AU
+	defaultPowerBIDataSourceVersion: powerBI_V3
+	discourageImplicitMeasures
+	sourceQueryCulture: en-AU
+
+annotation PBI_QueryOrder = ["DatabaseQuery"]
+
+ref table dim_appointment
+ref table dim_clinic
+ref table Date

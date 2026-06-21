@@ -1,0 +1,78 @@
+# manifest.yml - dataflow df_audiology_archival  (project HEARING_P4)
+# =============================================================================
+#  Synapse ARCHIVAL backfill (ADR-39 one-time + synapse-archival-ingestion-strategy.md).
+#  Reads the EarLake Synapse GOLD star schema from STORAGE (the gold ADLS - NOT serverless SQL,
+#  per the archival strategy) via the file family, and lands it as Delta into the ARCHIVE zone
+#  (cold, retain-only - NO Silver/Gold). Recon (rowhash) gates before the data is trusted and
+#  before Synapse is decommissioned. Columns are auto-mapped from Parquet (no schema pre-declared -
+#  archival lands the source schema as-is; no discovery sweep needed).
+#  Onboard VIA CICD (no manual metadata): merge this manifest, then run
+#     dataflows-build-deploy (project_code=HEARING_P4)  -> load_metadata registers meta.* + the
+#     earlake_gold_adls source; then dataflows-run to execute the backfill (F64 for the real run).
+#  Regenerate locally (preview only, seeds are NOT committed):
+#     python gen_seeds.py --project-dir dataflows/metadata/HEARING_P4
+# =============================================================================
+dag_uid: df_audiology_archival
+project_code: HEARING_P4
+domain: audiology            # ADR-49 lineage tag only
+kind: ingestion
+layers: [bronze]
+description: "Archival backfill (ADR-39, one-time) of the EarLake Synapse GOLD star schema into the Fabric archive zone. Read the gold Parquet from storage via the file family (not serverless SQL), land as Delta to the archive (is_archive, cold/retain-only - no Silver/Gold), rowhash-reconciled. Retired after recon + 30-day hypercare."
+owner: "fabric-admin@Samestantil44outlook.onmicrosoft.com"
+notes: |
+  ADR-39 + docs/migration/synapse-archival-ingestion-strategy.md: Synapse is a one-time backfill source.
+  Read STORAGE (the gold ADLS containers), NOT serverless SQL, for bulk. COLD archival -> straight to the
+  archive zone (is_archive: true), no Silver/Gold. Recon (rowhash, no meaningful SUM for a mixed star) gates
+  before trust + decommission. Source connection = earlake_gold_adls (an ADLS file source; KV-pointer; its
+  details land in meta.source_connection at deploy via load_metadata - never a manual entry). Storage paths
+  resolve from meta.external_location at runtime (ADR-36) - never hardcode abfss. Columns auto-mapped from
+  Parquet (auto_map) - no schema pre-declared, so no discovery sweep of EarLake is needed.
+
+# ===== BRONZE batch (file-family archival backfill of the 6 gold tables) =====
+bronze:
+  jobs:
+    - name: archive_backfill
+      order: 10
+      objects:
+        - name: dim_clinic
+          source: { kind: file, connection: earlake_gold_adls, location: earlake_gold, pattern: "dim_clinic/*.parquet", format: parquet, auto_map: true, auto_cast: true, file_check_mode: file_name }
+          target: { schema: archive, table: dim_clinic }
+          load:   { type: snapshot_archive }
+          recon:  { mode: rowhash }
+          is_archive: true
+          retention: { value: 7, unit: years }
+        - name: dim_date
+          source: { kind: file, connection: earlake_gold_adls, location: earlake_gold, pattern: "dim_date/*.parquet", format: parquet, auto_map: true, auto_cast: true, file_check_mode: file_name }
+          target: { schema: archive, table: dim_date }
+          load:   { type: snapshot_archive }
+          recon:  { mode: rowhash }
+          is_archive: true
+          retention: { value: 7, unit: years }
+        - name: dim_patient
+          source: { kind: file, connection: earlake_gold_adls, location: earlake_gold, pattern: "dim_patient/*.parquet", format: parquet, auto_map: true, auto_cast: true, file_check_mode: file_name }
+          target: { schema: archive, table: dim_patient }
+          load:   { type: snapshot_archive }
+          recon:  { mode: rowhash }
+          is_archive: true
+          retention: { value: 7, unit: years }
+        - name: fact_appointment
+          source: { kind: file, connection: earlake_gold_adls, location: earlake_gold, pattern: "fact_appointment/*.parquet", format: parquet, auto_map: true, auto_cast: true, file_check_mode: file_name }
+          target: { schema: archive, table: fact_appointment }
+          load:   { type: snapshot_archive }
+          recon:  { mode: rowhash }
+          is_archive: true
+          retention: { value: 7, unit: years }
+        - name: fact_audiogram
+          source: { kind: file, connection: earlake_gold_adls, location: earlake_gold, pattern: "fact_audiogram/*.parquet", format: parquet, auto_map: true, auto_cast: true, file_check_mode: file_name }
+          target: { schema: archive, table: fact_audiogram }
+          load:   { type: snapshot_archive }
+          recon:  { mode: rowhash }
+          is_archive: true
+          retention: { value: 7, unit: years }
+        - name: fact_hearing_aid_fitting
+          source: { kind: file, connection: earlake_gold_adls, location: earlake_gold, pattern: "fact_hearing_aid_fitting/*.parquet", format: parquet, auto_map: true, auto_cast: true, file_check_mode: file_name }
+          target: { schema: archive, table: fact_hearing_aid_fitting }
+          load:   { type: snapshot_archive }
+          recon:  { mode: rowhash }
+          is_archive: true
+          retention: { value: 7, unit: years }

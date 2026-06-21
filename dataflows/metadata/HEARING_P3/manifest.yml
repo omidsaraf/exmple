@@ -1,0 +1,50 @@
+# manifest.yml - dataflow df_audiology_devicetelemetry  (project HEARING_P3)
+# =============================================================================
+#  Worked example 3 of 3: FILE-based ingestion (the second ingestion kind, R3).
+#  Hearing-device telemetry CSVs land in a OneLake/ADLS location (pushed via SFTP/MFT or a Copy);
+#  the Copy pipeline (source -> landing) and the built-in file notebook (landing -> Bronze) run as
+#  two procs in the SAME bronze batch (copy at proc_order 5, ingest at 10), per ADR-48 (ingestion
+#  and bronze load both under the bronze batch). No transform/Gold - isolates the file path.
+#  Regenerate:  python gen_seeds.py --project-dir dataflows/metadata/HEARING_P3
+# =============================================================================
+dag_uid: df_audiology_devicetelemetry
+project_code: HEARING_P3
+domain: audiology
+kind: ingestion
+layers: [bronze]
+description: "Worked example 3 of 3 (file-based ingestion, the second ingestion kind). Hearing-device telemetry CSV files land in an audiology landing location; the generic Copy pipeline moves source files to the landing zone (copy proc, order 5) and the built-in file notebook reads them by pattern, applies header/cast/trim, stamps the audit and file-name columns, and appends to Bronze (ingest proc, order 10). Both procs live in the bronze batch."
+owner: "fabric-admin@Samestantil44outlook.onmicrosoft.com"
+notes: |
+  File loads are append (I-ALL): each landed file is a point-in-time snapshot, deduped by file
+  name (file_check_mode=file_name). The landing location resolves per env from meta.external_location
+  (ADR-36). Prerequisite connection: audiology_landing (source-system + KV pointer).
+
+# ===== BRONZE batch (copy proc + file-ingest proc) =====
+bronze:
+  jobs:
+    - name: ingest
+      order: 10
+      objects:
+        - name: device_telemetry
+          source:
+            kind: file
+            connection: audiology_landing
+            location: landing_audiology_devices
+            pattern: "*/part-*.csv"
+            format: csv
+            delimiter: ","
+            header: true
+            auto_map: true
+            auto_cast: true
+            auto_trim: true
+            file_check_mode: file_name
+          target: { schema: audiology, table: device_telemetry }
+          load:   { type: append }
+          recon:  { mode: rowhash }
+          retention: { value: 7, unit: years }
+          copy_pipeline: pl_copy_filestore_bronze    # emits P_copy_device_telemetry (order 5)
+          columns:
+            - { name: device_id,   type: string,        bk: true }
+            - { name: patient_ref, type: bigint,        phi: true, mask: true }
+            - { name: reading_ts,  type: "datetime2(3)" }
+            - { name: reading_db,  type: "decimal(5,1)" }

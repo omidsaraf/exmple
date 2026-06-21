@@ -1,0 +1,8 @@
+{
+  "version": "4.0",
+  "datasetReference": {
+    "byPath": {
+      "path": "../../../semantic-models/audiology/AudiologyAppointments.SemanticModel"
+    }
+  }
+}

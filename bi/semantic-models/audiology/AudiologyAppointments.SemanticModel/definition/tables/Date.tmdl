@@ -1,0 +1,27 @@
+/// Date dimension. A calculated (import) table coexists with the Direct Lake tables.
+/// For a pure-Direct-Lake model, replace this with a physical gold.dim_date and a
+/// directLake partition (preferred at scale); the calculated form keeps the sample self-contained.
+table Date
+	lineageTag: 33333333-3333-3333-3333-333333333333
+	dataCategory: Time
+
+	column Date
+		dataType: dateTime
+		isKey
+		formatString: Long Date
+		summarizeBy: none
+		lineageTag: 3a333333-3333-3333-3333-333333333333
+
+	column Year = YEAR(Date[Date])
+		dataType: int64
+		summarizeBy: none
+		lineageTag: 3b333333-3333-3333-3333-333333333333
+
+	column Month = FORMAT(Date[Date], "yyyy-MM")
+		dataType: string
+		summarizeBy: none
+		lineageTag: 3c333333-3333-3333-3333-333333333333
+
+	partition Date = calculated
+		mode: import
+		source = CALENDAR(DATE(2018, 1, 1), DATE(2030, 12, 31))

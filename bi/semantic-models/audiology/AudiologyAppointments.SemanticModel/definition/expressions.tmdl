@@ -1,0 +1,11 @@
+/// Direct Lake source = the SQL analytics endpoint of lh_gold (ADR-49).
+/// The server (SQL endpoint) + database are ENV-SPECIFIC and are set on deploy
+/// (Fabric Deployment Pipelines / post-deploy connection update, operating rules section 24).
+/// Placeholders below are replaced per env - do not commit a real endpoint.
+expression DatabaseQuery =
+		let
+		    Source = Sql.Database("REPLACE_LH_GOLD_SQL_ENDPOINT", "REPLACE_LH_GOLD_DATABASE")
+		in
+		    Source
+	lineageTag: a0000000-0000-0000-0000-0000000000aa
+	annotation PBI_IncludeFutureArtifacts = False

@@ -1,0 +1,7 @@
+relationship dim_appointment_to_dim_clinic
+	fromColumn: dim_appointment.clinic_id
+	toColumn: dim_clinic.clinic_id
+
+relationship dim_appointment_to_date
+	fromColumn: dim_appointment.appointment_date
+	toColumn: Date.Date

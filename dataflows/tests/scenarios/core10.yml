@@ -1,0 +1,68 @@
+# =============================================================================
+#  core10.yml - the standard mock-data scenario library (pl-test-harness)
+# -----------------------------------------------------------------------------
+#  Ten deterministic cases every ingestion flow must survive. The generator
+#  (scripts/make_mock_data.py) renders these against the flow's column metadata
+#  with a FIXED seed -> identical rows every run -> failures reproduce.
+#  Scenarios marked expect: quarantined/failed verify the FAILURE paths work -
+#  a harness that only tests happy paths certifies nothing (§28).
+# =============================================================================
+seed: 42
+scenarios:
+  - id: s01_happy_batch
+    desc: plain new rows inside a fresh watermark window
+    rows: 5
+    expect: succeeded_rows_copied
+
+  - id: s02_empty_window
+    desc: no rows beyond the current watermark
+    rows: 0
+    expect: succeeded_no_new_data
+
+  - id: s03_duplicate_business_key
+    desc: same business key twice in one window (dedupe_mode must collapse)
+    rows: 2
+    mutate: duplicate_key
+    expect: succeeded_deduped
+
+  - id: s04_late_arriving
+    desc: row with watermark BEHIND the current lower bound (must NOT load; logged §28)
+    rows: 1
+    mutate: backdate_watermark
+    expect: succeeded_zero_loaded
+
+  - id: s05_null_business_key
+    desc: null in the business key column (silver NOT NULL block)
+    rows: 1
+    mutate: null_key
+    expect: dq_block
+
+  - id: s06_boundary_equality
+    desc: row exactly AT the lower bound (half-open window - must be excluded, §15.5 r4)
+    rows: 1
+    mutate: watermark_equals_lower
+    expect: succeeded_zero_loaded
+
+  - id: s07_additive_drift
+    desc: extra column appears at source (absorb+log per drift_policy)
+    rows: 2
+    mutate: add_column
+    expect: succeeded_drift_logged
+
+  - id: s08_breaking_drift
+    desc: expected column missing (block; breaker counts it)
+    rows: 2
+    mutate: drop_column
+    expect: failed_breaking_drift
+
+  - id: s09_type_edge
+    desc: max-length strings, min/max dates, negative measures
+    rows: 3
+    mutate: extreme_values
+    expect: succeeded_rows_copied
+
+  - id: s10_rerun_idempotency
+    desc: re-run the SAME window after s01 (no duplicates, watermark unchanged)
+    rows: 0
+    rerun_of: s01_happy_batch
+    expect: succeeded_no_new_data
